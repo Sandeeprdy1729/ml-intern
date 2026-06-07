@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
@@ -28,6 +29,19 @@ function formatUsd(value: number | undefined): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatCount(value: number | undefined): string {
+  return new Intl.NumberFormat('en-US').format(value ?? 0);
+}
+
+function billingUnavailableMessage(error: string | null | undefined): string | null {
+  if (!error) return null;
+  if (error === 'missing_hf_token') return 'Sign in to view HF account billing usage.';
+  if (error === 'billing_usage_unavailable') {
+    return 'HF billing usage is unavailable. Showing app-observed calls and tokens; inference cost may be incomplete.';
+  }
+  return 'HF billing usage is unavailable. Showing app-observed calls and tokens; inference cost may be incomplete.';
 }
 
 function UsageRow({
@@ -79,6 +93,9 @@ function AccountUsageSection({
   account: HfAccountUsageBucket | null | undefined;
   telemetry: UsageBucket | null | undefined;
 }) {
+  const useJobEstimate =
+    !account || (account.hf_jobs_usd <= 0 && (telemetry?.hf_jobs_estimated_usd ?? 0) > 0);
+
   return (
     <Box sx={{ py: 1 }}>
       <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>
@@ -87,12 +104,19 @@ function AccountUsageSection({
       <UsageGrid>
         <UsageRow
           label="Inference Providers"
-          value={formatUsd(account?.inference_providers_usd ?? telemetry?.inference_usd)}
+          value={account ? formatUsd(account.inference_providers_usd) : 'Unavailable'}
           strong
         />
         <UsageRow
-          label={account ? 'HF Jobs' : 'HF Jobs estimated'}
-          value={formatUsd(account?.hf_jobs_usd ?? telemetry?.hf_jobs_estimated_usd)}
+          label={useJobEstimate ? 'HF Jobs estimated' : 'HF Jobs'}
+          value={formatUsd(
+            useJobEstimate ? telemetry?.hf_jobs_estimated_usd : account?.hf_jobs_usd,
+          )}
+        />
+        <UsageRow label="LLM calls" value={formatCount(telemetry?.llm_calls)} />
+        <UsageRow
+          label="Tokens"
+          value={formatCount(telemetry?.total_tokens)}
         />
       </UsageGrid>
     </Box>
@@ -139,9 +163,9 @@ export default function UsageMeter() {
     void fetchUsage(activeSessionId);
   }, [activeSessionId, fetchUsage]);
 
-  const sessionTotal =
-    usage?.hf_account?.current_session?.total_usd ?? usage?.session?.total_usd ?? 0;
+  const sessionTotal = usage?.hf_account?.current_session?.total_usd;
   const links = useMemo(() => usage?.links ?? {}, [usage?.links]);
+  const billingMessage = billingUnavailableMessage(usage?.hf_account?.error);
   const open = Boolean(anchorEl);
 
   return (
@@ -163,7 +187,7 @@ export default function UsageMeter() {
             '&:hover': { borderColor: 'primary.main', color: 'primary.main' },
           }}
         >
-          {formatUsd(sessionTotal)}
+          {sessionTotal == null ? 'Usage' : formatUsd(sessionTotal)}
         </Button>
       </Tooltip>
       <Popover
@@ -190,7 +214,7 @@ export default function UsageMeter() {
           Usage
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          Session billing is inferred from HF account usage since session start.
+          Session billing uses HF account usage since session start.
         </Typography>
 
         {error ? (
@@ -199,6 +223,11 @@ export default function UsageMeter() {
           </Typography>
         ) : (
           <>
+            {billingMessage && (
+              <Alert severity="info" sx={{ mt: 1.5, py: 0.25 }}>
+                {billingMessage}
+              </Alert>
+            )}
             <AccountUsageSection
               title="Current session"
               account={usage?.hf_account?.current_session ?? null}
